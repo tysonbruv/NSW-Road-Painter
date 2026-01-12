@@ -1,143 +1,75 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>NSW Road Painter – Layer Test</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<title>NSW Only Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
 
 <style>
 html, body {
-    margin: 0;
-    height: 100%;
-    background: #0b1b26; /* dark blue bottom layer */
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #000;
 }
 
-#container {
-    position: relative;
-    width: 100%;
-    height: 100%;
-}
-
-/* Bottom layer */
-#background {
-    position: absolute;
-    inset: 0;
-    background: #0b1b26;
-    z-index: 0;
-}
-
-/* Middle layer */
-#trailCanvas {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    pointer-events: none;
-}
-
-/* Top layer */
 #map {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
+  width: 100%;
+  height: 100%;
 }
 </style>
 </head>
-
 <body>
-<div id="container">
-    <div id="background"></div>
-    <canvas id="trailCanvas"></canvas>
-    <div id="map"></div>
-</div>
+
+<div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
 <script>
-/* ---------------- MAP ---------------- */
+// ===================== NSW BOUNDS =====================
+// Approximate NSW bounding box
+const NSW_BOUNDS = [
+  [-37.6, 141.0], // south-west
+  [-28.0, 153.7]  // north-east
+];
 
+// ===================== MAP =====================
 const map = L.map('map', {
-    zoomControl: false,
-    attributionControl: false
-}).setView([-33.87, 151.21], 16);
-
-/* Canvas tile layer so we can edit pixels */
-L.GridLayer.Canvas = L.GridLayer.extend({
-    createTile: function (coords) {
-        const tile = document.createElement('canvas');
-        tile.width = tile.height = 256;
-        const ctx = tile.getContext('2d');
-
-        const img = new Image();
-        img.crossOrigin = '';
-        img.src = `https://{s}.basemaps.cartocdn.com/dark_all/${coords.z}/${coords.x}/${coords.y}.png`
-            .replace('{s}', 'a');
-
-        img.onload = () => {
-            ctx.drawImage(img, 0, 0);
-
-            const imgData = ctx.getImageData(0, 0, 256, 256);
-            const d = imgData.data;
-
-            for (let i = 0; i < d.length; i += 4) {
-                const r = d[i];
-                const g = d[i + 1];
-                const b = d[i + 2];
-
-                /* Detect grey-ish pixels (roads) */
-                if (Math.abs(r - g) < 8 && Math.abs(r - b) < 8 && r > 80) {
-                    d[i + 3] = 0; // fully transparent
-                }
-            }
-
-            ctx.putImageData(imgData, 0, 0);
-        };
-
-        return tile;
-    }
+  zoomControl: false,
+  attributionControl: false,
+  minZoom: 6,
+  maxZoom: 18,
+  maxBounds: NSW_BOUNDS,
+  maxBoundsViscosity: 1.0, // hard wall
+  worldCopyJump: false
 });
 
-new L.GridLayer.Canvas().addTo(map);
+// Lock view to NSW once
+map.fitBounds(NSW_BOUNDS);
 
-/* ---------------- ORANGE TRAIL ---------------- */
+// ===================== BASE MAP =====================
+const base = L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {
+    subdomains: 'abcd',
+    noWrap: true   // IMPORTANT: stop infinite world
+  }
+);
 
-const trailCanvas = document.getElementById('trailCanvas');
-const tctx = trailCanvas.getContext('2d');
+base.addTo(map);
 
-function resizeCanvas() {
-    trailCanvas.width = window.innerWidth;
-    trailCanvas.height = window.innerHeight;
-}
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
-
-let lastPoint = null;
-
-function drawTrail(latlng) {
-    const point = map.latLngToContainerPoint(latlng);
-
-    tctx.fillStyle = '#ff8c1a';
-
-    if (lastPoint) {
-        tctx.fillRect(
-            (lastPoint.x + point.x) / 2 - 6,
-            (lastPoint.y + point.y) / 2 - 6,
-            12,
-            12
-        );
-    }
-
-    lastPoint = point;
-}
-
-/* ---------------- GPS ---------------- */
-
-navigator.geolocation.watchPosition(pos => {
-    const latlng = [pos.coords.latitude, pos.coords.longitude];
-    map.panTo(latlng, { animate: false });
-    drawTrail(L.latLng(latlng));
-});
+// ===================== DEBUG (optional) =====================
+// Visualise the NSW boundary rectangle
+L.rectangle(NSW_BOUNDS, {
+  color: '#ff8c1a',
+  weight: 2,
+  fillOpacity: 0
+}).addTo(map);
 </script>
+
 </body>
 </html>
