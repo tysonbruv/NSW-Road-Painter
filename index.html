@@ -5,10 +5,7 @@
 <title>Sydney Road Painter</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
 html, body {
@@ -21,16 +18,17 @@ html, body {
 #map {
   width: 100%;
   height: 100%;
+  background: #000;
 }
 
 .info {
   position: absolute;
   top: 12px;
   left: 12px;
-  background: rgba(20,20,20,0.9);
+  background: rgba(0,0,0,0.8);
   color: #fff;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 12px;
   z-index: 1000;
   font-size: 13px;
 }
@@ -39,138 +37,125 @@ html, body {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: #ff7a18;
+  background: #ff8c1a;
   color: #000;
   border: none;
-  padding: 8px 14px;
-  border-radius: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
   font-weight: 600;
   cursor: pointer;
   z-index: 1000;
 }
 </style>
 </head>
+
 <body>
 
 <div id="map"></div>
 
 <div class="info">
-  <strong>Sydney Road Painter</strong>
-  <div id="status">Loading Sydney roads…</div>
+  <strong>Sydney Road Painter</strong><br>
+  <span id="status">Loading roads…</span>
 </div>
 
-<button class="reset" onclick="resetTrail()">Reset</button>
+<button class="reset" onclick="resetPaint()">Reset</button>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-// =====================
-// MAP
-// =====================
 const map = L.map('map', {
   zoomControl: false,
-  attributionControl: false,
-  minZoom: 10,
-  maxZoom: 18
-}).setView([-33.87, 151.21], 13);
+  attributionControl: false
+}).setView([-33.8688, 151.2093], 13);
 
-// Dark basemap (land + water)
-L.tileLayer(
-  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  { subdomains: 'abcd' }
+// solid black base
+L.rectangle(
+  [[-90, -180], [90, 180]],
+  { color: "#000", fillColor: "#000", fillOpacity: 1, weight: 0 }
 ).addTo(map);
 
-// =====================
-// SYDNEY ROADS (BLUE)
-// =====================
-const roadsLayer = L.layerGroup().addTo(map);
+// storage
+const PAINTED = new Set(JSON.parse(localStorage.getItem("paintedRoads") || "[]"));
 
-// Small Sydney bounding box (IMPORTANT)
-const bbox = "-33.95,151.05,-33.80,151.30";
-
-const overpassURL =
-  "https://overpass-api.de/api/interpreter?data=" +
-  encodeURIComponent(`
-[out:json];
-way["highway"](${bbox});
-out geom;
-`);
-
-fetch(overpassURL)
-  .then(r => r.json())
-  .then(data => {
-    data.elements.forEach(el => {
-      if (!el.geometry) return;
-
-      const pts = el.geometry.map(p => [p.lat, p.lon]);
-      L.polyline(pts, {
-        color: "#2f80ff",
-        weight: 2,
-        opacity: 1
-      }).addTo(roadsLayer);
-    });
-
-    document.getElementById("status").textContent = "Painting roads…";
+const roadLayer = L.geoJSON(null, {
+  style: f => ({
+    color: PAINTED.has(f.properties.id) ? "#ff8c1a" : "#2f80ff",
+    weight: PAINTED.has(f.properties.id) ? 6 : 2,
+    opacity: 1
   })
-  .catch(() => {
-    document.getElementById("status").textContent = "Road load failed";
-  });
+}).addTo(map);
 
-// =====================
-// ORANGE USER + TRAIL
-// =====================
-const trailLayer = L.layerGroup().addTo(map);
+// fetch Sydney roads
+fetch("https://overpass-api.de/api/interpreter", {
+  method: "POST",
+  body: `
+[out:json];
+(
+  way["highway"]( -34.1,150.8,-33.6,151.35 );
+);
+out geom;
+`
+})
+.then(r => r.json())
+.then(data => {
+  const features = data.elements.map(w => ({
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: w.geometry.map(p => [p.lon, p.lat])
+    },
+    properties: { id: w.id }
+  }));
 
-let userMarker = L.rectangle([[0,0],[0,0]], {
-  color: "#ff7a18",
-  weight: 0,
+  roadLayer.addData(features);
+  document.getElementById("status").textContent = "Painting roads…";
+});
+
+// user marker
+const user = L.circleMarker([0,0], {
+  radius: 6,
+  color: "#ff8c1a",
+  fillColor: "#ff8c1a",
   fillOpacity: 1
 }).addTo(map);
 
-function drawUser(latlng) {
-  const size = 0.00025;
+// paint nearest road
+function paintNearest(latlng) {
+  let closest = null;
+  let minDist = Infinity;
 
-  const bounds = [
-    [latlng.lat - size, latlng.lng - size],
-    [latlng.lat + size, latlng.lng + size]
-  ];
+  roadLayer.eachLayer(l => {
+    const d = L.GeometryUtil.distanceSegment(
+      map,
+      latlng,
+      l.getLatLngs()[0],
+      l.getLatLngs()[l.getLatLngs().length - 1]
+    );
+    if (d < minDist) {
+      minDist = d;
+      closest = l;
+    }
+  });
 
-  userMarker.setBounds(bounds);
-
-  L.rectangle(bounds, {
-    color: "#ff7a18",
-    weight: 0,
-    fillOpacity: 1
-  }).addTo(trailLayer);
+  if (closest) {
+    PAINTED.add(closest.feature.properties.id);
+    localStorage.setItem("paintedRoads", JSON.stringify([...PAINTED]));
+    closest.setStyle({ color: "#ff8c1a", weight: 6 });
+  }
 }
 
-// =====================
 // GPS
-// =====================
-if (navigator.geolocation) {
-  navigator.geolocation.watchPosition(
-    pos => {
-      const latlng = {
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude
-      };
+navigator.geolocation.watchPosition(pos => {
+  const ll = [pos.coords.latitude, pos.coords.longitude];
+  user.setLatLng(ll);
+  map.setView(ll);
+  paintNearest(L.latLng(ll));
+});
 
-      map.setView(latlng, 17);
-      drawUser(latlng);
-    },
-    () => {
-      document.getElementById("status").textContent =
-        "Location permission denied";
-    },
-    { enableHighAccuracy: true }
-  );
-}
-
-// =====================
-// RESET
-// =====================
-function resetTrail() {
-  trailLayer.clearLayers();
+// reset
+function resetPaint() {
+  localStorage.removeItem("paintedRoads");
+  location.reload();
 }
 </script>
 
