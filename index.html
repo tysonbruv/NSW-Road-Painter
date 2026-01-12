@@ -1,21 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>NSW Road Painter</title>
+<meta charset="UTF-8" />
+<title>NSW Road Painter – Three Layer Model</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
 html, body {
   margin: 0;
   padding: 0;
-  background: #000;
   height: 100%;
+  background: #000;
 }
 
 #map {
@@ -23,17 +18,16 @@ html, body {
   height: 100%;
 }
 
-/* UI */
 .info {
   position: absolute;
   top: 12px;
   left: 12px;
   background: rgba(20,20,20,0.9);
   color: #fff;
-  padding: 12px 14px;
-  border-radius: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  z-index: 999;
+  z-index: 1000;
 }
 
 .info small {
@@ -46,81 +40,95 @@ html, body {
   right: 12px;
   background: #ff8c1a;
   color: #000;
-  padding: 10px 16px;
-  border-radius: 14px;
+  padding: 8px 14px;
+  border-radius: 12px;
   font-weight: 600;
   font-family: system-ui;
   cursor: pointer;
-  z-index: 999;
+  z-index: 1000;
 }
 </style>
 </head>
-
 <body>
 
 <div id="map"></div>
 
 <div class="info">
-  <strong>NSW Road Painter</strong><br />
+  <strong>NSW Road Painter</strong><br>
   <small id="status">Waiting for GPS…</small>
 </div>
 
 <div class="reset" onclick="resetPaint()">Reset</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
 <script>
-/* =========================
-   MAP SETUP
-========================= */
+/*************************************************
+ * MAP INITIALISATION
+ *************************************************/
+
+const NSW_BOUNDS = L.latLngBounds(
+  [-37.505, 140.999],
+  [-28.157, 153.638]
+);
 
 const map = L.map('map', {
   zoomControl: false,
-  attributionControl: false
-}).setView([-33.85, 150.9], 17);
+  attributionControl: false,
+  maxBounds: NSW_BOUNDS,
+  maxBoundsViscosity: 1.0,
+  minZoom: 6,
+  maxZoom: 18
+}).fitBounds(NSW_BOUNDS);
 
-/* Solid black base (100% opaque) */
-L.rectangle(
-  [[-90, -180], [90, 180]],
-  { color: '#000', weight: 0, fillOpacity: 1 }
-).addTo(map);
+/*************************************************
+ * PANE ORDER (BOTTOM → TOP)
+ *************************************************/
+map.createPane('basePane');
+map.createPane('paintPane');
+map.createPane('roadPane');
 
-/* =========================
-   ORANGE PAINT LAYER
-========================= */
+map.getPane('basePane').style.zIndex = 200;
+map.getPane('paintPane').style.zIndex = 400;
+map.getPane('roadPane').style.zIndex = 600;
 
-const paintLayer = L.layerGroup().addTo(map);
-
-/* =========================
-   USER MARKER
-========================= */
-
-const userMarker = L.rectangle([[0,0],[0,0]], {
-  color: '#ff8c1a',
-  weight: 0,
-  fillOpacity: 1
+/*************************************************
+ * BOTTOM LAYER — SOLID GREY NSW BASE
+ *************************************************/
+L.rectangle(NSW_BOUNDS, {
+  pane: 'basePane',
+  fillColor: '#2a2a2a',
+  fillOpacity: 1,
+  stroke: false
 }).addTo(map);
 
-/* =========================
-   ROAD MASK (GREY @ 5%)
-========================= */
+/*************************************************
+ * MIDDLE LAYER — ORANGE PAINT + USER
+ *************************************************/
+const paintLayer = L.layerGroup({ pane: 'paintPane' }).addTo(map);
 
+const userMarker = L.rectangle([[0,0],[0,0]], {
+  pane: 'paintPane',
+  fillColor: '#ff8c1a',
+  fillOpacity: 1,
+  stroke: false
+}).addTo(map);
+
+/*************************************************
+ * TOP LAYER — NSW ROADS (VECTOR MASK)
+ *************************************************/
 const roadLayer = L.geoJSON(null, {
+  pane: 'roadPane',
   style: {
-    color: '#aaa',
+    color: '#b0b0b0',
     weight: 6,
     opacity: 0.05
   }
 }).addTo(map);
 
-/* Load roads from OSM Overpass */
 function loadRoads(center) {
-  const radius = 1200;
   const query = `
     [out:json];
-    way
-      ["highway"]
-      (around:${radius},${center.lat},${center.lng});
+    way[highway](around:1500,${center.lat},${center.lng});
     out geom;
   `;
 
@@ -141,47 +149,40 @@ function loadRoads(center) {
   });
 }
 
-/* =========================
-   PAINTING LOGIC
-========================= */
-
-const paintRadiusMeters = 60;
-const paintedCells = new Set();
+/*************************************************
+ * PAINTING LOGIC
+ *************************************************/
+const PAINT_RADIUS_METERS = 60;
+const painted = new Set();
 
 function paintAt(latlng) {
-  const key =
-    latlng.lat.toFixed(5) + ',' + latlng.lng.toFixed(5);
+  const key = latlng.lat.toFixed(5) + ',' + latlng.lng.toFixed(5);
+  if (painted.has(key)) return;
+  painted.add(key);
 
-  if (paintedCells.has(key)) return;
-  paintedCells.add(key);
-
-  const circle = L.circle(latlng, {
-    radius: paintRadiusMeters,
-    color: '#ff8c1a',
-    weight: 0,
-    fillOpacity: 1
-  });
-
-  paintLayer.addLayer(circle);
+  L.circle(latlng, {
+    pane: 'paintPane',
+    radius: PAINT_RADIUS_METERS,
+    fillColor: '#ff8c1a',
+    fillOpacity: 1,
+    stroke: false
+  }).addTo(paintLayer);
 }
 
-/* =========================
-   GPS TRACKING
-========================= */
-
+/*************************************************
+ * GPS TRACKING
+ *************************************************/
 navigator.geolocation.watchPosition(
   pos => {
-    const latlng = {
-      lat: pos.coords.latitude,
-      lng: pos.coords.longitude
-    };
+    const latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
 
-    document.getElementById('status').textContent =
-      'Painting roads…';
+    if (!NSW_BOUNDS.contains(latlng)) {
+      document.getElementById('status').textContent = 'Outside NSW';
+      return;
+    }
 
     map.setView(latlng, map.getZoom(), { animate: false });
 
-    /* User square (slightly wider than roads) */
     const size = 0.00012;
     userMarker.setBounds([
       [latlng.lat - size, latlng.lng - size],
@@ -194,10 +195,11 @@ navigator.geolocation.watchPosition(
       loadRoads(latlng);
       window.roadsLoaded = true;
     }
+
+    document.getElementById('status').textContent = 'Painting roads…';
   },
   err => {
-    document.getElementById('status').textContent =
-      'Location permission denied';
+    document.getElementById('status').textContent = 'Location denied';
   },
   {
     enableHighAccuracy: true,
@@ -206,16 +208,14 @@ navigator.geolocation.watchPosition(
   }
 );
 
-/* =========================
-   RESET
-========================= */
-
+/*************************************************
+ * RESET
+ *************************************************/
 function resetPaint() {
-  if (!confirm('Clear painted roads?')) return;
+  if (!confirm('Clear painted area?')) return;
   paintLayer.clearLayers();
-  paintedCells.clear();
+  painted.clear();
 }
 </script>
-
 </body>
 </html>
