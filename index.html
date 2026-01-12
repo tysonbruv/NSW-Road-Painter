@@ -1,99 +1,59 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
-<title>NSW Only Map (Hard Cut)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8">
+  <title>NSW Roads Overlay</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
 
-<style>
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  background: #000;
-}
-
-#map {
-  width: 100%;
-  height: 100%;
-}
-</style>
+  <style>
+    html, body, #map {
+      margin: 0;
+      height: 100%;
+      background: #000;
+    }
+  </style>
 </head>
 <body>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script>
-// ===================== NSW BOUNDS =====================
-const NSW_BOUNDS = [
-  [-37.6, 141.0], // SW
-  [-28.0, 153.7]  // NE
-];
+  const map = L.map('map', {
+    zoomControl: false,
+    attributionControl: false
+  }).setView([-32.5, 147.0], 6);
 
-// Corners (clockwise)
-const NSW_POLY = [
-  [-37.6, 141.0],
-  [-37.6, 153.7],
-  [-28.0, 153.7],
-  [-28.0, 141.0]
-];
+  // Base dark map (can be anything)
+  L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    { maxZoom: 18 }
+  ).addTo(map);
 
-// ===================== MAP =====================
-const map = L.map('map', {
-  zoomControl: false,
-  attributionControl: false,
-  minZoom: 6,
-  maxZoom: 18,
-  worldCopyJump: false,
-  maxBounds: NSW_BOUNDS,
-  maxBoundsViscosity: 1
-});
+  // NSW bounding box
+  map.setMaxBounds([
+    [-38.0, 140.9],
+    [-27.9, 154.0]
+  ]);
 
-map.fitBounds(NSW_BOUNDS);
-
-// ===================== BASE MAP =====================
-L.tileLayer(
-  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  {
-    subdomains: 'abcd',
-    noWrap: true
-  }
-).addTo(map);
-
-// ===================== MASK (THIS IS THE KEY) =====================
-// Giant world polygon
-const WORLD = [
-  [-90, -180],
-  [-90, 180],
-  [90, 180],
-  [90, -180]
-];
-
-// Mask = world minus NSW
-L.polygon(
-  [
-    WORLD,
-    NSW_POLY
-  ],
-  {
-    fillColor: '#1b1b1b', // void colour
-    fillOpacity: 1,
-    stroke: false
-  }
-).addTo(map);
-
-// ===================== NSW BORDER (optional) =====================
-L.rectangle(NSW_BOUNDS, {
-  color: '#ff8c1a',
-  weight: 2,
-  fillOpacity: 0
-}).addTo(map);
+  // === VECTOR ROADS OVERLAY ===
+  fetch('nsw_roads.geojson') // <-- this is the key
+    .then(r => r.json())
+    .then(data => {
+      L.geoJSON(data, {
+        style: {
+          color: '#007bff',   // blue roads
+          weight: 2,
+          opacity: 1
+        }
+      }).addTo(map);
+    });
 </script>
 
 </body>
