@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>NSW Road Painter – v1</title>
+<title>NSW Road Painter – Radius Reveal</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
@@ -13,13 +13,10 @@ html, body {
   background: #000;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
-
 #map {
   width: 100%;
   height: 100%;
-  background: #000;
 }
-
 .info {
   position: absolute;
   top: 12px;
@@ -29,16 +26,13 @@ html, body {
   border-radius: 10px;
   font-size: 13px;
   color: #f5f5f5;
-  box-shadow: 0 0 20px rgba(0,0,0,0.6);
   z-index: 1000;
 }
-
 .status {
   font-size: 11px;
   opacity: 0.7;
   margin-top: 4px;
 }
-
 .reset {
   position: absolute;
   top: 12px;
@@ -52,21 +46,15 @@ html, body {
   cursor: pointer;
   z-index: 1000;
 }
-
-.reset:hover { opacity: 0.9; }
 </style>
 </head>
 <body>
-
 <div id="map"></div>
-
 <div class="info">
-  <div><strong>NSW Road Painter</strong></div>
+  <strong>NSW Road Painter</strong>
   <div class="status" id="status">Waiting for location…</div>
 </div>
-
 <button class="reset" onclick="resetPaint()">Reset</button>
-
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // ---------------- NSW BOUNDS ----------------
@@ -75,23 +63,7 @@ const NSW_BOUNDS = L.latLngBounds(
   [-28.157, 153.638]
 );
 
-// Approximate NSW border polygon (for prototype visualisation)
-const NSW_BORDER = [
-  [-37.505, 141.002],
-  [-36.5, 141.1],
-  [-34.5, 141.0],
-  [-32.5, 141.0],
-  [-30.5, 141.0],
-  [-28.157, 141.0],
-  [-28.157, 153.638],
-  [-32.0, 153.3],
-  [-34.5, 152.5],
-  [-36.5, 150.0],
-  [-37.505, 149.5],
-  [-37.505, 141.002]
-];
-
-// ---------------- MAP SETUP ----------------
+// ---------------- MAP ----------------
 const map = L.map('map', {
   zoomControl: false,
   attributionControl: false,
@@ -101,67 +73,70 @@ const map = L.map('map', {
   maxZoom: 18
 }).fitBounds(NSW_BOUNDS);
 
-// Black base, no labels
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-  maxZoom: 18,
   subdomains: 'abcd'
 }).addTo(map);
 
-// Subtle grey roads
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
   opacity: 0.35,
   subdomains: 'abcd'
 }).addTo(map);
 
-// NSW Border Highlight
-L.polyline(NSW_BORDER, {
-  color: '#ffcc00',
-  weight: 4,
-  opacity: 0.9
+// ---------------- USER DOT ----------------
+const userDot = L.circleMarker([0,0], {
+  radius: 6,
+  color: '#ff7a18',
+  fillColor: '#ff7a18',
+  fillOpacity: 1,
+  weight: 0
 }).addTo(map);
 
-// ---------------- STORAGE ----------------
-const STORAGE_KEY = 'nsw_painted_cells';
+// ---------------- PAINT LAYER ----------------
+const paintLayer = L.layerGroup().addTo(map);
+const STORAGE_KEY = 'nsw_radius_reveal';
 let painted = new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
 
-// ---------------- PAINTING GRID (PROXY) ----------------
-const gridSize = 0.0003;
-let lastCell = null;
+const GRID = 0.0004;        // grid resolution
+const RADIUS_M = 80;        // reveal radius in meters
 
-function snapToGrid(latlng) {
-  const lat = Math.round(latlng.lat / gridSize) * gridSize;
-  const lng = Math.round(latlng.lng / gridSize) * gridSize;
+function gridKey(lat, lng) {
   return `${lat.toFixed(4)},${lng.toFixed(4)}`;
 }
 
-function paintCell(cell) {
-  if (painted.has(cell)) return;
-  painted.add(cell);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...painted]));
+function revealArea(center) {
+  const lat = center.lat;
+  const lng = center.lng;
 
-  const [lat, lng] = cell.split(',').map(Number);
-  L.circleMarker([lat, lng], {
-    radius: 5,
-    color: '#ff7a18',
-    fillColor: '#ff7a18',
-    fillOpacity: 0.9,
-    weight: 0
-  }).addTo(map);
+  for (let dx = -4; dx <= 4; dx++) {
+    for (let dy = -4; dy <= 4; dy++) {
+      const pLat = lat + dx * GRID;
+      const pLng = lng + dy * GRID;
+      const point = L.latLng(pLat, pLng);
+
+      if (center.distanceTo(point) > RADIUS_M) continue;
+      if (!NSW_BOUNDS.contains(point)) continue;
+
+      const key = gridKey(pLat, pLng);
+      if (painted.has(key)) continue;
+
+      painted.add(key);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...painted]));
+
+      L.circleMarker(point, {
+        radius: 6,
+        color: '#ff7a18',
+        fillColor: '#ff7a18',
+        fillOpacity: 0.9,
+        weight: 0
+      }).addTo(paintLayer);
+    }
+  }
 }
-
-// ---------------- USER MARKER ----------------
-const userMarker = L.circleMarker([0, 0], {
-  radius: 7,
-  color: '#f5f5f5',
-  weight: 2,
-  fillOpacity: 0,
-  opacity: 0.85
-}).addTo(map);
 
 // ---------------- GEOLOCATION ----------------
 function startTracking() {
   if (!navigator.geolocation) {
-    document.getElementById('status').textContent = 'Geolocation not supported';
+    document.getElementById('status').textContent = 'Geolocation unsupported';
     return;
   }
 
@@ -174,13 +149,8 @@ function startTracking() {
     }
 
     map.setView(latlng, 17);
-    userMarker.setLatLng(latlng);
-
-    const cell = snapToGrid(latlng);
-    if (cell !== lastCell) {
-      paintCell(cell);
-      lastCell = cell;
-    }
+    userDot.setLatLng(latlng);
+    revealArea(latlng);
 
     document.getElementById('status').textContent = 'Painting roads…';
   }, err => {
@@ -194,8 +164,7 @@ function startTracking() {
 
 // ---------------- RESET ----------------
 function resetPaint() {
-  if (!confirm('Clear painted roads?')) return;
-  painted.clear();
+  if (!confirm('Clear painted areas?')) return;
   localStorage.removeItem(STORAGE_KEY);
   location.reload();
 }
