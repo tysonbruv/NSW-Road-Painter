@@ -1,191 +1,221 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>NSW Road Painter – v1</title>
+<meta charset="utf-8" />
+<title>NSW Road Painter</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+
 <style>
 html, body {
   margin: 0;
   padding: 0;
-  height: 100%;
   background: #000;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  height: 100%;
 }
 
 #map {
   width: 100%;
   height: 100%;
-  background: #000;
 }
 
+/* UI */
 .info {
   position: absolute;
   top: 12px;
   left: 12px;
-  background: rgba(16,16,16,0.9);
-  padding: 10px 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  color: #f5f5f5;
-  box-shadow: 0 0 20px rgba(0,0,0,0.6);
-  z-index: 1000;
+  background: rgba(20,20,20,0.9);
+  color: #fff;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  z-index: 999;
 }
 
-.status {
-  font-size: 11px;
+.info small {
   opacity: 0.7;
-  margin-top: 4px;
 }
 
 .reset {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: #ff7a18;
-  border: none;
+  background: #ff8c1a;
   color: #000;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-family: system-ui;
   cursor: pointer;
-  z-index: 1000;
+  z-index: 999;
 }
-
-.reset:hover { opacity: 0.9; }
 </style>
 </head>
+
 <body>
 
 <div id="map"></div>
 
 <div class="info">
-  <div><strong>NSW Road Painter</strong></div>
-  <div class="status" id="status">Waiting for location…</div>
+  <strong>NSW Road Painter</strong><br />
+  <small id="status">Waiting for GPS…</small>
 </div>
 
-<button class="reset" onclick="resetPaint()">Reset</button>
+<div class="reset" onclick="resetPaint()">Reset</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-// ---------------- NSW BOUNDS ----------------
-const NSW_BOUNDS = L.latLngBounds(
-  [-37.505, 140.999],
-  [-28.157, 153.638]
-);
 
-// ---------------- MAP ----------------
+<script>
+/* =========================
+   MAP SETUP
+========================= */
+
 const map = L.map('map', {
   zoomControl: false,
-  attributionControl: false,
-  maxBounds: NSW_BOUNDS,
-  maxBoundsViscosity: 1.0,
-  minZoom: 6,
-  maxZoom: 18
-}).fitBounds(NSW_BOUNDS);
+  attributionControl: false
+}).setView([-33.85, 150.9], 17);
 
-// Black base (bottom)
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-  maxZoom: 18,
-  subdomains: 'abcd'
-}).addTo(map);
+/* Solid black base (100% opaque) */
+L.rectangle(
+  [[-90, -180], [90, 180]],
+  { color: '#000', weight: 0, fillOpacity: 1 }
+).addTo(map);
 
-// Paint layer (UNDER roads)
+/* =========================
+   ORANGE PAINT LAYER
+========================= */
+
 const paintLayer = L.layerGroup().addTo(map);
 
-// Grey roads (top, semi-transparent)
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
-  opacity: 0.6,
-  subdomains: 'abcd'
-}).addTo(map);
+/* =========================
+   USER MARKER
+========================= */
 
-// ---------------- STORAGE ----------------
-const STORAGE_KEY = 'nsw_painted_cells';
-let painted = new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
-
-// ---------------- GRID ----------------
-const gridSize = 0.00025; // smaller = smoother
-let lastCell = null;
-
-function snapToGrid(latlng) {
-  const lat = Math.round(latlng.lat / gridSize) * gridSize;
-  const lng = Math.round(latlng.lng / gridSize) * gridSize;
-  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
-}
-
-function paintCell(cell) {
-  if (painted.has(cell)) return;
-  painted.add(cell);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...painted]));
-
-  const [lat, lng] = cell.split(',').map(Number);
-
-  L.rectangle([
-    [lat - gridSize / 2, lng - gridSize / 2],
-    [lat + gridSize / 2, lng + gridSize / 2]
-  ], {
-    fillColor: '#ff7a18',
-    fillOpacity: 0.95,
-    stroke: false
-  }).addTo(paintLayer);
-}
-
-// ---------------- USER MARKER (SQUARE) ----------------
 const userMarker = L.rectangle([[0,0],[0,0]], {
-  fillColor: '#ff7a18',
-  fillOpacity: 1,
-  stroke: false
+  color: '#ff8c1a',
+  weight: 0,
+  fillOpacity: 1
 }).addTo(map);
 
-// ---------------- GEOLOCATION ----------------
-function startTracking() {
-  if (!navigator.geolocation) {
-    document.getElementById('status').textContent = 'Geolocation not supported';
-    return;
+/* =========================
+   ROAD MASK (GREY @ 5%)
+========================= */
+
+const roadLayer = L.geoJSON(null, {
+  style: {
+    color: '#aaa',
+    weight: 6,
+    opacity: 0.05
   }
+}).addTo(map);
 
-  navigator.geolocation.watchPosition(pos => {
-    const latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+/* Load roads from OSM Overpass */
+function loadRoads(center) {
+  const radius = 1200;
+  const query = `
+    [out:json];
+    way
+      ["highway"]
+      (around:${radius},${center.lat},${center.lng});
+    out geom;
+  `;
 
-    if (!NSW_BOUNDS.contains(latlng)) {
-      document.getElementById('status').textContent = 'Outside NSW';
-      return;
-    }
-
-    map.setView(latlng, 17);
-
-    const size = gridSize * 1.6;
-    userMarker.setBounds([
-      [latlng.lat - size / 2, latlng.lng - size / 2],
-      [latlng.lat + size / 2, latlng.lng + size / 2]
-    ]);
-
-    const cell = snapToGrid(latlng);
-    if (cell !== lastCell) {
-      paintCell(cell);
-      lastCell = cell;
-    }
-
-    document.getElementById('status').textContent = 'Painting roads…';
-  }, err => {
-    document.getElementById('status').textContent = 'Location permission denied';
-  }, {
-    enableHighAccuracy: true,
-    maximumAge: 1000,
-    timeout: 10000
+  fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: query
+  })
+  .then(r => r.json())
+  .then(data => {
+    const features = data.elements.map(e => ({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: e.geometry.map(p => [p.lon, p.lat])
+      }
+    }));
+    roadLayer.addData(features);
   });
 }
 
-// ---------------- RESET ----------------
-function resetPaint() {
-  if (!confirm('Clear painted roads?')) return;
-  painted.clear();
-  localStorage.removeItem(STORAGE_KEY);
-  location.reload();
+/* =========================
+   PAINTING LOGIC
+========================= */
+
+const paintRadiusMeters = 60;
+const paintedCells = new Set();
+
+function paintAt(latlng) {
+  const key =
+    latlng.lat.toFixed(5) + ',' + latlng.lng.toFixed(5);
+
+  if (paintedCells.has(key)) return;
+  paintedCells.add(key);
+
+  const circle = L.circle(latlng, {
+    radius: paintRadiusMeters,
+    color: '#ff8c1a',
+    weight: 0,
+    fillOpacity: 1
+  });
+
+  paintLayer.addLayer(circle);
 }
 
-startTracking();
+/* =========================
+   GPS TRACKING
+========================= */
+
+navigator.geolocation.watchPosition(
+  pos => {
+    const latlng = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude
+    };
+
+    document.getElementById('status').textContent =
+      'Painting roads…';
+
+    map.setView(latlng, map.getZoom(), { animate: false });
+
+    /* User square (slightly wider than roads) */
+    const size = 0.00012;
+    userMarker.setBounds([
+      [latlng.lat - size, latlng.lng - size],
+      [latlng.lat + size, latlng.lng + size]
+    ]);
+
+    paintAt(latlng);
+
+    if (!window.roadsLoaded) {
+      loadRoads(latlng);
+      window.roadsLoaded = true;
+    }
+  },
+  err => {
+    document.getElementById('status').textContent =
+      'Location permission denied';
+  },
+  {
+    enableHighAccuracy: true,
+    maximumAge: 1000,
+    timeout: 10000
+  }
+);
+
+/* =========================
+   RESET
+========================= */
+
+function resetPaint() {
+  if (!confirm('Clear painted roads?')) return;
+  paintLayer.clearLayers();
+  paintedCells.clear();
+}
 </script>
+
 </body>
 </html>
