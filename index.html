@@ -1,118 +1,143 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>NSW Road Painter – v1</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<meta charset="UTF-8">
+<title>NSW Road Painter – Layer Test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
 <style>
 html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  background: #000;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    margin: 0;
+    height: 100%;
+    background: #0b1b26; /* dark blue bottom layer */
 }
-#map { width: 100%; height: 100%; }
-.info {
-  position: absolute; top: 12px; left: 12px;
-  background: rgba(0,0,0,0.75);
-  padding: 12px 14px; border-radius: 12px;
-  color: #fff; font-size: 13px; z-index: 1000;
+
+#container {
+    position: relative;
+    width: 100%;
+    height: 100%;
 }
-.status { font-size: 11px; opacity: 0.7; }
-.reset {
-  position: absolute; top: 12px; right: 12px;
-  background: #ff8c1a; border: none; padding: 10px 14px;
-  border-radius: 10px; font-weight: 600; cursor: pointer; z-index: 1000;
+
+/* Bottom layer */
+#background {
+    position: absolute;
+    inset: 0;
+    background: #0b1b26;
+    z-index: 0;
+}
+
+/* Middle layer */
+#trailCanvas {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Top layer */
+#map {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
 }
 </style>
 </head>
+
 <body>
-<div id="map"></div>
-<div class="info">
-  <strong>NSW Road Painter</strong>
-  <div class="status" id="status">Waiting for GPS…</div>
+<div id="container">
+    <div id="background"></div>
+    <canvas id="trailCanvas"></canvas>
+    <div id="map"></div>
 </div>
-<button class="reset" onclick="resetPaint()">Reset</button>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script>
-// ===================== BOUNDS =====================
-const NSW_BOUNDS = L.latLngBounds([-37.505, 140.999], [-28.157, 153.638]);
-const GRID = 0.00025;
-const STORAGE_KEY = 'nsw_paint_cells';
-// ===================== MAP =====================
+/* ---------------- MAP ---------------- */
+
 const map = L.map('map', {
-  zoomControl: false,
-  attributionControl: false,
-  minZoom: 6,
-  maxZoom: 18,
-  maxBounds: NSW_BOUNDS,
-  maxBoundsViscosity: 1
-}).fitBounds(NSW_BOUNDS);
-// ===================== PANES =====================
-map.createPane('base');
-map.createPane('paint');
-map.createPane('roads');
-map.getPane('base').style.zIndex  = 100;
-map.getPane('paint').style.zIndex = 300;
-map.getPane('roads').style.zIndex = 600;
-// ===================== BASE LAYER =====================
-L.rectangle(NSW_BOUNDS, {
-  pane: 'base', fillColor: '#2b2b2b', fillOpacity: 1, weight: 0
-}).addTo(map);
-// ===================== ROAD MASK =====================
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-  pane: 'roads', opacity: 1
-}).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
-  pane: 'roads', opacity: 0.05
-}).addTo(map);
-// ===================== PAINT =====================
-const painted = new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
-function snap(ll) {
-  const lat = Math.round(ll.lat / GRID) * GRID;
-  const lng = Math.round(ll.lng / GRID) * GRID;
-  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+    zoomControl: false,
+    attributionControl: false
+}).setView([-33.87, 151.21], 16);
+
+/* Canvas tile layer so we can edit pixels */
+L.GridLayer.Canvas = L.GridLayer.extend({
+    createTile: function (coords) {
+        const tile = document.createElement('canvas');
+        tile.width = tile.height = 256;
+        const ctx = tile.getContext('2d');
+
+        const img = new Image();
+        img.crossOrigin = '';
+        img.src = `https://{s}.basemaps.cartocdn.com/dark_all/${coords.z}/${coords.x}/${coords.y}.png`
+            .replace('{s}', 'a');
+
+        img.onload = () => {
+            ctx.drawImage(img, 0, 0);
+
+            const imgData = ctx.getImageData(0, 0, 256, 256);
+            const d = imgData.data;
+
+            for (let i = 0; i < d.length; i += 4) {
+                const r = d[i];
+                const g = d[i + 1];
+                const b = d[i + 2];
+
+                /* Detect grey-ish pixels (roads) */
+                if (Math.abs(r - g) < 8 && Math.abs(r - b) < 8 && r > 80) {
+                    d[i + 3] = 0; // fully transparent
+                }
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+        };
+
+        return tile;
+    }
+});
+
+new L.GridLayer.Canvas().addTo(map);
+
+/* ---------------- ORANGE TRAIL ---------------- */
+
+const trailCanvas = document.getElementById('trailCanvas');
+const tctx = trailCanvas.getContext('2d');
+
+function resizeCanvas() {
+    trailCanvas.width = window.innerWidth;
+    trailCanvas.height = window.innerHeight;
 }
-function paint(cell) {
-  if (painted.has(cell)) return;
-  painted.add(cell);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...painted]));
-  const [lat, lng] = cell.split(',').map(Number);
-  L.rectangle([
-    [lat - GRID/2, lng - GRID/2],
-    [lat + GRID/2, lng + GRID/2]
-  ], { pane: 'paint', fillColor: '#ff8c1a', fillOpacity: 1, weight: 0 }).addTo(map);
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+let lastPoint = null;
+
+function drawTrail(latlng) {
+    const point = map.latLngToContainerPoint(latlng);
+
+    tctx.fillStyle = '#ff8c1a';
+
+    if (lastPoint) {
+        tctx.fillRect(
+            (lastPoint.x + point.x) / 2 - 6,
+            (lastPoint.y + point.y) / 2 - 6,
+            12,
+            12
+        );
+    }
+
+    lastPoint = point;
 }
-// ===================== USER =====================
-const user = L.rectangle([[0,0],[0,0]], {
-  pane: 'paint', fillColor: '#ff8c1a', fillOpacity: 1, weight: 0
-}).addTo(map);
-let last = null;
-// ===================== GPS =====================
+
+/* ---------------- GPS ---------------- */
+
 navigator.geolocation.watchPosition(pos => {
-  const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
-  if (!NSW_BOUNDS.contains(ll)) {
-    document.getElementById('status').textContent = 'Outside NSW'; return;
-  }
-  const cell = snap(ll);
-  if (cell !== last) { paint(cell); last = cell; }
-  user.setBounds([
-    [ll.lat - GRID, ll.lng - GRID],
-    [ll.lat + GRID, ll.lng + GRID]
-  ]);
-  map.setView(ll, 17);
-  document.getElementById('status').textContent = 'Painting roads…';
-}, () => {
-  document.getElementById('status').textContent = 'Location denied';
-}, { enableHighAccuracy: true, maximumAge: 1000 });
-// ===================== RESET =====================
-function resetPaint() {
-  if (!confirm('Clear painted roads?')) return;
-  localStorage.removeItem(STORAGE_KEY);
-  location.reload();
-}
+    const latlng = [pos.coords.latitude, pos.coords.longitude];
+    map.panTo(latlng, { animate: false });
+    drawTrail(L.latLng(latlng));
+});
 </script>
 </body>
 </html>
