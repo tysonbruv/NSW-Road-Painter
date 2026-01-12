@@ -1,59 +1,194 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>NSW Roads Overlay</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
+<title>NSW Road Painter – Vector Prototype</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
 
-  <style>
-    html, body, #map {
-      margin: 0;
-      height: 100%;
-      background: #000;
-    }
-  </style>
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0b0b0b;
+  font-family: system-ui, sans-serif;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+}
+
+/* UI */
+.info {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(20,20,20,0.95);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 10px;
+  z-index: 1000;
+  font-size: 13px;
+}
+
+.reset {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #ff7a18;
+  color: #000;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 1000;
+}
+</style>
 </head>
 <body>
 
 <div id="map"></div>
 
+<div class="info">
+  <strong>NSW Road Painter</strong>
+  <div id="status">Loading NSW roads…</div>
+</div>
+
+<button class="reset" onclick="resetTrail()">Reset</button>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-  const map = L.map('map', {
-    zoomControl: false,
-    attributionControl: false
-  }).setView([-32.5, 147.0], 6);
+// =====================
+// MAP SETUP
+// =====================
+const map = L.map('map', {
+  zoomControl: false,
+  attributionControl: false,
+  minZoom: 6,
+  maxZoom: 18
+}).setView([-32.5, 147.0], 6);
 
-  // Base dark map (can be anything)
-  L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    { maxZoom: 18 }
-  ).addTo(map);
+// Solid dark background (fake land)
+L.rectangle(
+  [[-40, 130], [-10, 170]],
+  { color: '#0b0b0b', weight: 0, fillOpacity: 1 }
+).addTo(map);
 
-  // NSW bounding box
-  map.setMaxBounds([
-    [-38.0, 140.9],
-    [-27.9, 154.0]
-  ]);
+// NSW bounds (hard clamp)
+const NSW_BOUNDS = [
+  [-37.6, 141.0],
+  [-28.0, 153.7]
+];
+map.setMaxBounds(NSW_BOUNDS);
+map.fitBounds(NSW_BOUNDS);
 
-  // === VECTOR ROADS OVERLAY ===
-  fetch('nsw_roads.geojson') // <-- this is the key
-    .then(r => r.json())
-    .then(data => {
-      L.geoJSON(data, {
-        style: {
-          color: '#007bff',   // blue roads
-          weight: 2,
-          opacity: 1
-        }
-      }).addTo(map);
-    });
+// =====================
+// VECTOR ROADS (BLUE)
+// =====================
+const roadsLayer = L.layerGroup().addTo(map);
+
+const overpassQuery = `
+[out:json][timeout:25];
+(
+  way["highway"]
+    (${NSW_BOUNDS[0][0]},${NSW_BOUNDS[0][1]},
+     ${NSW_BOUNDS[1][0]},${NSW_BOUNDS[1][1]});
+);
+out geom;
+`;
+
+fetch("https://overpass-api.de/api/interpreter", {
+  method: "POST",
+  body: overpassQuery
+})
+.then(res => res.json())
+.then(data => {
+  data.elements.forEach(el => {
+    if (!el.geometry) return;
+
+    const latlngs = el.geometry.map(p => [p.lat, p.lon]);
+    L.polyline(latlngs, {
+      color: '#2f80ff',
+      weight: 2,
+      opacity: 1
+    }).addTo(roadsLayer);
+  });
+
+  document.getElementById("status").textContent = "Painting roads…";
+})
+.catch(() => {
+  document.getElementById("status").textContent = "Road load failed";
+});
+
+// =====================
+// USER + ORANGE TRAIL
+// =====================
+const trailLayer = L.layerGroup().addTo(map);
+
+const userMarker = L.rectangle([[0,0],[0,0]], {
+  color: '#ff7a18',
+  weight: 0,
+  fillOpacity: 1
+}).addTo(map);
+
+function drawUser(latlng) {
+  const size = 0.0003; // square size
+  const bounds = [
+    [latlng.lat - size, latlng.lng - size],
+    [latlng.lat + size, latlng.lng + size]
+  ];
+
+  userMarker.setBounds(bounds);
+
+  L.rectangle(bounds, {
+    color: '#ff7a18',
+    weight: 0,
+    fillOpacity: 1
+  }).addTo(trailLayer);
+}
+
+// =====================
+// GEOLOCATION
+// =====================
+if (navigator.geolocation) {
+  navigator.geolocation.watchPosition(
+    pos => {
+      const latlng = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude
+      };
+
+      if (
+        latlng.lat < NSW_BOUNDS[0][0] ||
+        latlng.lat > NSW_BOUNDS[1][0] ||
+        latlng.lng < NSW_BOUNDS[0][1] ||
+        latlng.lng > NSW_BOUNDS[1][1]
+      ) return;
+
+      map.setView(latlng, 17);
+      drawUser(latlng);
+    },
+    () => {
+      document.getElementById("status").textContent =
+        "Location permission denied";
+    },
+    { enableHighAccuracy: true }
+  );
+}
+
+// =====================
+// RESET
+// =====================
+function resetTrail() {
+  trailLayer.clearLayers();
+}
 </script>
 
 </body>
